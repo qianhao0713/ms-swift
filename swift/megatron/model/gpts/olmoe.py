@@ -18,7 +18,6 @@ from ..constant import MegatronModelType
 from ..gpt_bridge import GPTBridge
 from ..model_config import MegatronModelConfig
 from ..register import MegatronModelLoader, MegatronModelMeta, register_megatron_model
-
 mcore_013 = version.parse(megatron.core.__version__) >= version.parse('0.13.0rc0')
 
 

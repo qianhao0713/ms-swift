@@ -483,3 +483,15 @@ register_template(
         suffix=['<|endoftext|>'],
         stop_words=['<|endoftext|>'],
     ))
+
+register_template(
+    TemplateMeta(
+        LLMTemplateType.olmoe,
+        prefix=['|||IP_ADDRESS|||'],
+        system_prefix=['|||IP_ADDRESS|||<|system|>\n{{SYSTEM}}\n'],
+        prompt=['<|user|>\n{{QUERY}}\n<|assistant|>\n'],
+        chat_sep=['|||IP_ADDRESS|||\n'],
+        suffix=['|||IP_ADDRESS|||'],
+        default_system='You are a helpful assistant.',
+        stop_words=['<|endoftext|>'],
+    ))

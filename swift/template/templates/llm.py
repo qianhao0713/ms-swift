@@ -483,3 +483,16 @@ register_template(
         suffix=['<|endoftext|>'],
         stop_words=['<|endoftext|>'],
     ))
+
+register_template(
+    TemplateMeta(
+        LLMTemplateType.olmo3,
+        prefix=['<|im_start|>'],
+        system_prefix=['<|im_start|>system\n{{SYSTEM}}<|im_end|>'],
+        prompt=['\n<|im_start|>user\n{{QUERY}}<|im_end|>\n<|im_start|>assistant\n'],
+        chat_sep=['<|im_end|>'],
+        suffix=['<|endoftext|>'],
+        stop_words=['<|endoftext|>'],
+        default_system=
+        'You are a helpful function-calling AI assistant. You do not currently have access to any functions. <functions></functions>'
+    ))

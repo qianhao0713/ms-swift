@@ -408,3 +408,19 @@ register_model(
         ],
         architectures=['OlmoeForCausalLM'],
     ))
+
+register_model(
+    ModelMeta(
+        LLMModelType.olmo3,
+        [
+            ModelGroup([
+                Model('allenai/Olmo-3-1025-7B', 'allenai/Olmo-3-1025-7B'),
+                Model('allenai/Olmo-3-7B-Think', 'allenai/Olmo-3-7B-Think'),
+                Model('allenai/Olmo-3-7B-Instruct', 'allenai/Olmo-3-7B-Instruct'),
+                Model('allenai/Olmo-3-1125-32B', 'allenai/Olmo-3-1125-32B'),
+                Model('allenai/Olmo-3-32B-Think', 'allenai/Olmo-3-32B-Think'),
+            ])
+        ],
+        template=TemplateType.olmo3,
+        architectures=['Olmo3ForCausalLM'],
+    ))

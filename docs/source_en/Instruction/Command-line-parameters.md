@@ -685,8 +685,8 @@ Inference arguments include the [base arguments](#base-arguments), [merge argume
 - 🔥infer_backend: Inference acceleration backend, supporting four inference engines: 'transformers', 'vllm', 'sglang', and 'lmdeploy'. The default is 'transformers'.
   - Note: All four engines use SWIFT's template, controlled by `--template_backend`.
 - 🔥max_batch_size: Effective when infer_backend is set to 'transformers'; used for batch inference, with a default value of 1. If set to -1, there is no restriction.
-- 🔥result_path: Path to store inference results (jsonl). The default is None, meaning results are saved in the checkpoint directory (with args.json file) or './result' directory. The final storage path will be printed in the command line.
-  - Note: If the `result_path` file already exists, it will be appended to.
+- 🔥result_path: Path to store inference results (jsonl). Defaults to None. When performing inference/evaluation on datasets, results are saved by default in the checkpoint directory (containing args.json file) or the './result' directory. The final storage path will be printed in the command line (interactive inference or deployment does not save results by default).
+  - Note: If the `result_path` file already exists, results will be appended to it.
 - write_batch_size: The batch size for writing results to result_path. Defaults to 1000. If set to -1, there is no restriction.
 - metric: Evaluate the results of the inference, currently supporting 'acc' and 'rouge'. The default is None, meaning no evaluation is performed.
 - val_dataset_sample: Number of samples from the inference dataset, default is None.
@@ -866,12 +866,12 @@ For the meaning of the arguments, please refer to [here](https://modelscope.cn/m
 - VIDEO_MAX_NUM: Default is 1, which is the MAX_NUM for videos
 - VIDEO_SEGMENTS: Default is 8
 
-### minicpmv2_6, minicpmo2_6, minicpmv4
+### minicpmv2_6, minicpmv4, minicpmo
 - MAX_SLICE_NUMS: Default is 9, refer to [here](https://modelscope.cn/models/OpenBMB/MiniCPM-V-2_6/file/view/master?fileName=config.json&status=1)
 - VIDEO_MAX_SLICE_NUMS: Default is 1, which is the MAX_SLICE_NUMS for videos, refer to [here](https://modelscope.cn/models/OpenBMB/MiniCPM-V-2_6)
 - MAX_NUM_FRAMES: Default is 64, refer to [here](https://modelscope.cn/models/OpenBMB/MiniCPM-V-2_6)
 
-### minicpmo2_6
+### minicpmo
 - INIT_TTS: Default is False
 - INIT_AUDIO: Default is False
 

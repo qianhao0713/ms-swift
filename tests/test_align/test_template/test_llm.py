@@ -715,12 +715,10 @@ def test_olmoe():
     jinja_response = _infer_model(engine)
     assert swift_response == jinja_response
 
-
-def test_olmoe():
-    pt_engine = PtEngine('allenai/OLMoE-1B-7B-0924-Instruct')
-    # pt_engine = PtEngine('allenai/OLMoE-1B-7B-0125-Instruct')
+def test_olmo3():
+    engine = TransformersEngine('allenai/Olmo-3-7B-Instruct-SFT')
     swift_response = _infer_model(pt_engine)
-    pt_engine.default_template.template_backend = 'jinja'
+    engine.template.template_backend = 'jinja'
     jinja_response = _infer_model(pt_engine)
     assert swift_response == jinja_response
 
@@ -781,4 +779,5 @@ if __name__ == '__main__':
     # test_medgemma3()
     # test_youtu_llm()
     # test_glm4_moe_lite()
-    test_olmoe()
+    # test_olmoe()
+    test_olmo3()

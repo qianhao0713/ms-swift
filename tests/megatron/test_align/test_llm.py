@@ -157,6 +157,10 @@ def test_olmoe():
     _test_model('allenai/OLMoE-1B-7B-0125-Instruct')
 
 
+def test_olmo3():
+    _test_model('allenai/Olmo-3-1025-7B')
+
+
 if __name__ == '__main__':
     # test_qwen2()
     # test_llama2()
@@ -189,4 +193,5 @@ if __name__ == '__main__':
     # test_glm4()
     # test_minimax_m2()
     # test_glm4_moe_lite()
-    test_olmoe()
+    # test_olmoe()
+    test_olmo3()

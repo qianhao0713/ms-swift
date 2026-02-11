@@ -117,6 +117,7 @@ class LLMTemplateType:
     youtu_llm = 'youtu_llm'
     olmoe = 'olmoe'
     olmoe_0924 = 'olmoe_0924'
+    olmo3 = 'olmo3'
 
 
 class RMTemplateType:

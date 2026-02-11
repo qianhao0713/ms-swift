@@ -493,6 +493,5 @@ register_template(
         chat_sep=['<|im_end|>'],
         suffix=['<|endoftext|>'],
         stop_words=['<|endoftext|>'],
-        default_system=
-        'You are a helpful function-calling AI assistant. You do not currently have access to any functions. <functions></functions>'
-    ))
+        default_system='You are a helpful function-calling AI assistant.'
+        'You do not currently have access to any functions. <functions></functions>'))

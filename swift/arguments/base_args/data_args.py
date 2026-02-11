@@ -95,7 +95,6 @@ class DataArguments:
     model_author: Optional[List[str]] = field(default=None, metadata={'help': "e.g. ['魔搭', 'ModelScope']"})
 
     custom_dataset_info: List[str] = field(default_factory=list)  # .json
-    use_packed_dataset: bool = False
 
     def _init_custom_dataset_info(self):
         """register custom dataset_info.json to datasets"""

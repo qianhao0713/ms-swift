@@ -30,27 +30,24 @@ from swift.model import ModelType
 from swift.megatron.model.gpt_model import GPTModel
 from .olmoe import OLMoESelfAttention, OLMoEBridge
 from ..constant import MegatronModelType
-from ..register import MegatronModelMeta, register_megatron_model
+from ..register import MegatronModelLoader, MegatronModelMeta, register_megatron_model
 
 mcore_013 = version.parse(megatron.core.__version__) >= version.parse('0.13.0rc0')
 
 class OLMo3SelfAttention(OLMoESelfAttention):
 
     def __init__(self, config: TransformerConfig, submodules: SelfAttentionSubmodules, *args, **kwargs):
-        _args = get_args()
         config_sw = deepcopy(config)
         layer_index = kwargs['layer_number'] - 1
-        if _args.layer_types[layer_index] == 'sliding_attention':
-            config_sw.window_size = _args.window_size
-        elif _args.layer_types[layer_index] == 'full_attention':
+        if int(config.window_attn_skip_freq[layer_index]) == 0:
             config_sw.window_size = None
         super().__init__(config_sw, submodules, *args, **kwargs)
-        if _args.layer_types[layer_index] == 'sliding_attention':
+        if int(config.window_attn_skip_freq[layer_index]) == 1:
             self.layer_type = 'sliding_attention'
             self.mscale = 1.0
         else:
             self.layer_type = 'full_attention'
-            self.mscale = _args.rope_scaling['attention_factor']
+            self.mscale = config.rope_scaling['attention_factor']
 
     def forward(
         self,
@@ -544,12 +541,12 @@ class Olmo3GPTModel(GPTModel):
         super().__init__(*args, **kwargs)
         self.rotary_pos_emb_sliding = RotaryEmbedding(
             kv_channels=self.config.kv_channels,
-            rotary_percent=kwargs['rotary_percent'],
+            rotary_percent=self.config.rotary_percent,
             rotary_interleaved=self.config.rotary_interleaved,
-            seq_len_interpolation_factor=kwargs['seq_len_interpolation_factor'],
-            rotary_base=kwargs['rotary_base'],
-            rope_scaling=kwargs['rope_scaling'],
-            rope_scaling_factor=kwargs['rope_scaling_factor'],
+            # seq_len_interpolation_factor=kwargs['seq_len_interpolation_factor'],
+            rotary_base=self.config.rotary_base,
+            rope_scaling=self.config.rope_scaling,
+            #rope_scaling_factor=self.config.rope_scaling_factor,
             use_cpu_initialization=self.config.use_cpu_initialization,
             cp_group=self.pg_collection.cp,
         )
@@ -693,11 +690,17 @@ def get_olmo3_decoder_block_spec(
 
     return block_spec
 
+class OlMo3Loader(MegatronModelLoader):
+    model_cls=Olmo3GPTModel
+
+    def get_transformer_layer_spec(self, vp_stage: Optional[int] = None):
+        return get_olmo3_decoder_block_spec(self.config, vp_stage)
+
+
 register_megatron_model(
     MegatronModelMeta(
         MegatronModelType.olmo3,
         [ModelType.olmo3],
-        get_transformer_layer_spec=get_olmo3_decoder_block_spec,
-        model_cls=Olmo3GPTModel,
         bridge_cls=OLMo3Bridge,
+        loader=OlMo3Loader
     ))

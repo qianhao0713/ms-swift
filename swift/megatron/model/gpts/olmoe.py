@@ -18,6 +18,7 @@ from ..constant import MegatronModelType
 from ..gpt_bridge import GPTBridge
 from ..model_config import MegatronModelConfig
 from ..register import MegatronModelLoader, MegatronModelMeta, register_megatron_model
+
 mcore_013 = version.parse(megatron.core.__version__) >= version.parse('0.13.0rc0')
 
 
@@ -187,7 +188,7 @@ class OLMoEBridge(GPTBridge):
                     hf_state_dict['v_proj.weight_scale_inv'] = scale_inv[-kv_block:, :].clone()
                 del mg_attn_weight
         self._set_state_dict(mg_attn, 'linear_proj.weight', hf_state_dict, 'o_proj.weight', to_mcore)
-        if args.add_qkv_bias and not self._is_peft_format:
+        if hasattr(args, 'add_qkv_bias') and args.add_qkv_bias and not self._is_peft_format:
             if to_mcore:
                 linear_qkv_bias = torch.cat([
                     hf_state_dict['q_proj.bias'].load(),

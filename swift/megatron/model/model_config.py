@@ -488,6 +488,10 @@ def convert_hf_config(config) -> Dict[str, Any]:
         res.setdefault('linear_attention_freq', 4)
     elif llm_model_type == 'minimax_m2':
         res['add_qkv_bias'] = False
+    elif llm_model_type == 'olmo3':
+        window_attn_skip_freq = ','.join(['1' if lt == 'sliding_attention' else '0' for lt in layer_types])
+        res['window_attn_skip_freq'] = f'[{window_attn_skip_freq}]'
+        res['window_size'] = f'{window_size},0'
     elif hf_model_type == 'llama4':
         qk_layernorm = res.pop('qk_layernorm', False)
         if qk_layernorm:

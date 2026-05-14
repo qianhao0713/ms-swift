@@ -486,27 +486,6 @@ register_template(
 
 register_template(
     TemplateMeta(
-        LLMTemplateType.olmoe,
-        prefix=['|||IP_ADDRESS|||'],
-        system_prefix=['|||IP_ADDRESS|||<|system|>\n{{SYSTEM}}\n'],
-        prompt=['<|user|>\n{{QUERY}}\n<|assistant|>\n'],
-        chat_sep=['|||IP_ADDRESS|||\n'],
-        suffix=['|||IP_ADDRESS|||'],
-        stop_words=['<|endoftext|>'],
-    ))
-
-register_template(
-    TemplateMeta(
-        LLMTemplateType.olmoe_0924,
-        prefix=['<|endoftext|>'],
-        system_prefix=['<|endoftext|><|system|>\n{{SYSTEM}}\n'],
-        prompt=['<|user|>\n{{QUERY}}\n<|assistant|>\n'],
-        chat_sep=['<|endoftext|>\n'],
-        suffix=['<|endoftext|>'],
-        stop_words=['<|endoftext|>'],
-    ))
-register_template(
-    TemplateMeta(
         LLMTemplateType.olmo3,
         prefix=['<|im_start|>'],
         system_prefix=['<|im_start|>system\n{{SYSTEM}}<|im_end|>'],

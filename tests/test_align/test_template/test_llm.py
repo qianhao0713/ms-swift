@@ -715,18 +715,11 @@ def test_olmoe():
     jinja_response = _infer_model(engine)
     assert swift_response == jinja_response
 
+
 def test_olmo3():
     engine = TransformersEngine('allenai/Olmo-3-7B-Instruct-SFT')
     swift_response = _infer_model(pt_engine)
     engine.template.template_backend = 'jinja'
-    jinja_response = _infer_model(pt_engine)
-    assert swift_response == jinja_response
-
-
-def test_olmo3():
-    pt_engine = PtEngine('allenai/Olmo-3-7B-Instruct-SFT')
-    swift_response = _infer_model(pt_engine)
-    pt_engine.default_template.template_backend = 'jinja'
     jinja_response = _infer_model(pt_engine)
     assert swift_response == jinja_response
 

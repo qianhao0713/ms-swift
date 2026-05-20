@@ -1,38 +1,43 @@
 import megatron.core
 import torch
-from copy import deepcopy
-from typing import Optional, Union, Any, Tuple
-from dataclasses import dataclass, fields
 from contextlib import nullcontext
-from torch import Tensor
+from copy import deepcopy
+from dataclasses import dataclass, fields
 from megatron.core import tensor_parallel
 from megatron.core.enums import Fp8Recipe
 from megatron.core.extensions.transformer_engine import TENorm
 from megatron.core.fp4_utils import get_fp4_context
 from megatron.core.fp8_utils import get_fp8_context
 from megatron.core.inference.contexts import BaseInferenceContext
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec, TESpecProvider
-from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEmbedding
+from megatron.core.models.common.embeddings import rope_utils
 from megatron.core.models.common.embeddings.rope_utils import apply_rotary_pos_emb
+from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEmbedding
+from megatron.core.models.gpt.gpt_layer_specs import TESpecProvider, get_gpt_layer_with_transformer_engine_spec
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.attention import SelfAttentionSubmodules
 from megatron.core.transformer.enums import LayerType
-from megatron.core.transformer.spec_utils import ModuleSpec, build_module
-from megatron.core.transformer.transformer_block import TransformerBlock, TransformerBlockSubmodules, get_num_layers_to_build
-from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.transformer.transformer_layer import TransformerLayer, TransformerLayerSubmodules, get_transformer_layer_offset
 from megatron.core.transformer.identity_op import IdentityOp
-from megatron.core.utils import WrappedTensor, nvtx_range_push, nvtx_range_pop, deprecate_inference_params, make_viewless_tensor
-from megatron.training import get_args
+from megatron.core.transformer.spec_utils import ModuleSpec, build_module
+from megatron.core.transformer.transformer_block import (TransformerBlock, TransformerBlockSubmodules,
+                                                         get_num_layers_to_build)
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.transformer_layer import (TransformerLayer, TransformerLayerSubmodules,
+                                                         get_transformer_layer_offset)
+from megatron.core.utils import (WrappedTensor, deprecate_inference_params, make_viewless_tensor, nvtx_range_pop,
+                                 nvtx_range_push)
 from packaging import version
-from swift.model import ModelType
+from torch import Tensor
+from typing import Any, Optional, Tuple, Union
+
 from swift.megatron.model.gpt_model import GPTModel
-from .olmoe import OLMoESelfAttention, OLMoEBridge
+from swift.model import ModelType
 from ..constant import MegatronModelType
 from ..register import MegatronModelLoader, MegatronModelMeta, register_megatron_model
+from .olmoe import OLMoEBridge, OLMoESelfAttention
 
 mcore_013 = version.parse(megatron.core.__version__) >= version.parse('0.13.0rc0')
+
 
 class OLMo3SelfAttention(OLMoESelfAttention):
 
@@ -47,7 +52,10 @@ class OLMo3SelfAttention(OLMoESelfAttention):
             self.mscale = 1.0
         else:
             self.layer_type = 'full_attention'
-            self.mscale = config.rope_scaling['attention_factor']
+            if config.rope_scaling is not None and 'attention_factor' in config.rope_scaling:
+                self.mscale = config.rope_scaling['attention_factor']
+            else:
+                self.mscale = 1.0
 
     def forward(
         self,
@@ -72,40 +80,33 @@ class OLMo3SelfAttention(OLMoESelfAttention):
 
         is_using_flash_decode = is_inference_mode and self.config.flash_decode
 
-        is_using_flashinfer_rope = is_inference_mode and (
-            not inference_context.is_static_batching()
-            and inference_context.use_flashinfer_fused_rope
-        )
+        is_using_flashinfer_rope = is_inference_mode and (not inference_context.is_static_batching()
+                                                          and inference_context.use_flashinfer_fused_rope)
         if is_using_flash_decode or is_using_flashinfer_rope:
             rotary_pos_emb = None
         else:
             assert rotary_pos_cos is None and rotary_pos_sin is None
 
         if rotary_pos_emb is not None and not isinstance(rotary_pos_emb, tuple):
-            rotary_pos_emb = (rotary_pos_emb,) * 2
+            rotary_pos_emb = (rotary_pos_emb, ) * 2
 
-        nvtx_range_push(suffix="qkv")
+        nvtx_range_push(suffix='qkv')
         split_qkv = True
-        if self.attention_type != "cross":
-            assert not (
-                self.config.fused_single_qkv_rope and split_qkv
-            ), "fused_single_qkv_rope requested but not available/supported for the config."
+        if self.attention_type != 'cross':
+            assert not (self.config.fused_single_qkv_rope
+                        and split_qkv), 'fused_single_qkv_rope requested but not available/supported for the config.'
 
-        qkv_output = self.get_query_key_value_tensors(
-            hidden_states, key_value_states, split_qkv=split_qkv
-        )
+        qkv_output = self.get_query_key_value_tensors(hidden_states, key_value_states, split_qkv=split_qkv)
         attn_mask_type = self.attn_mask_type
         query, key, value = qkv_output
-        nvtx_range_pop(suffix="qkv")
+        nvtx_range_pop(suffix='qkv')
         if packed_seq_params is not None:
             query = query.squeeze(1)
             key = key.squeeze(1)
             value = value.squeeze(1)
 
-        nvtx_range_push(suffix="rotary_pos_emb")
-        if rotary_pos_emb is not None and (
-            not self.config.flash_decode or inference_context is None
-        ):
+        nvtx_range_push(suffix='rotary_pos_emb')
+        if rotary_pos_emb is not None and (not self.config.flash_decode or inference_context is None):
             q_pos_emb, k_pos_emb = rotary_pos_emb
 
             if packed_seq_params is not None:
@@ -138,9 +139,9 @@ class OLMo3SelfAttention(OLMoESelfAttention):
                     cp_group=self.pg_collection.cp,
                 )
 
-        nvtx_range_pop(suffix="rotary_pos_emb")
+        nvtx_range_pop(suffix='rotary_pos_emb')
 
-        nvtx_range_push(suffix="core_attention")
+        nvtx_range_push(suffix='core_attention')
         if self.checkpoint_core_attention and self.training:
             core_attn_out = self._checkpointed_attention_forward(
                 query,
@@ -163,19 +164,22 @@ class OLMo3SelfAttention(OLMoESelfAttention):
             )
         if packed_seq_params is not None and packed_seq_params.qkv_format == 'thd':
             core_attn_out = core_attn_out.reshape(core_attn_out.size(0), 1, -1)
-        nvtx_range_pop(suffix="core_attention")
+        nvtx_range_pop(suffix='core_attention')
 
-        nvtx_range_push(suffix="linear_proj")
+        nvtx_range_push(suffix='linear_proj')
         output, bias = self.linear_proj(core_attn_out)
-        nvtx_range_pop(suffix="linear_proj")
+        nvtx_range_pop(suffix='linear_proj')
 
         return output, bias
+
 
 @dataclass
 class Olmo3TransformerLayerSubmodules(TransformerLayerSubmodules):
     post_mlp_layernorm: Union[ModuleSpec, type] = IdentityOp
 
+
 class TransformerLayerWithPostLayerNorm(TransformerLayer):
+
     def __init__(
         self,
         config: TransformerConfig,
@@ -185,14 +189,7 @@ class TransformerLayerWithPostLayerNorm(TransformerLayer):
         pg_collection: Optional[ProcessGroupCollection] = None,
         vp_stage: Optional[int] = None,
     ):
-        super().__init__(
-            config,
-            submodules,
-            layer_number,
-            hidden_dropout,
-            pg_collection,
-            vp_stage
-        )
+        super().__init__(config, submodules, layer_number, hidden_dropout, pg_collection, vp_stage)
         self.post_attn_layernorm = build_module(
             submodules.post_attn_layernorm,
             config=self.config,
@@ -224,7 +221,7 @@ class TransformerLayerWithPostLayerNorm(TransformerLayer):
         inference_params: Optional[Any] = None,
     ):
         residual = hidden_states
-        nvtx_range_push(suffix="self_attention")
+        nvtx_range_push(suffix='self_attention')
         attention_output_with_bias = self.self_attention(
             hidden_states,
             attention_mask=attention_mask,
@@ -237,19 +234,18 @@ class TransformerLayerWithPostLayerNorm(TransformerLayer):
             packed_seq_params=packed_seq_params,
             sequence_len_offset=sequence_len_offset,
         )
-        nvtx_range_pop(suffix="self_attention")
+        nvtx_range_pop(suffix='self_attention')
         post_attn_layernorm_output = self.post_attn_layernorm(attention_output_with_bias[0])
-        nvtx_range_push(suffix="self_attn_bda")
+        nvtx_range_push(suffix='self_attn_bda')
         with self.bias_dropout_add_exec_handler():
             hidden_states = self.self_attn_bda(self.training, self.config.bias_dropout_fusion)(
-                (post_attn_layernorm_output, None), residual, self.hidden_dropout
-            )
-        nvtx_range_pop(suffix="self_attn_bda")
+                (post_attn_layernorm_output, None), residual, self.hidden_dropout)
+        nvtx_range_pop(suffix='self_attn_bda')
         return hidden_states, context
 
     def _forward_mlp(self, hidden_states, inference_context=None):
         residual = hidden_states
-        nvtx_range_push(suffix="mlp")
+        nvtx_range_push(suffix='mlp')
         if self.recompute_mlp:
             if self.config.fp8:
                 # import here to avoid circular import
@@ -263,34 +259,28 @@ class TransformerLayerWithPostLayerNorm(TransformerLayer):
                     hidden_states,
                 )
             else:
-                mlp_output_with_bias = tensor_parallel.checkpoint(
-                    self.mlp, False, hidden_states
-                )
+                mlp_output_with_bias = tensor_parallel.checkpoint(self.mlp, False, hidden_states)
 
         mlp_output_with_bias = self.mlp(hidden_states)
 
         if self.recompute_pre_mlp_layernorm:
-            self.pre_mlp_norm_checkpoint.discard_output_and_register_recompute(
-                mlp_output_with_bias[0]
-            )
-        nvtx_range_pop(suffix="mlp")
+            self.pre_mlp_norm_checkpoint.discard_output_and_register_recompute(mlp_output_with_bias[0])
+        nvtx_range_pop(suffix='mlp')
 
         mlp_output, bias_output = mlp_output_with_bias
         mlp_output_layernorm = self.post_mlp_layernorm(mlp_output)
         mlp_output_with_bias = (mlp_output_layernorm, bias_output)
 
-        nvtx_range_push(suffix="mlp_bda")
+        nvtx_range_push(suffix='mlp_bda')
         with self.bias_dropout_add_exec_handler():
-            hidden_states = self.mlp_bda(self.training, self.config.bias_dropout_fusion)(
-                mlp_output_with_bias, residual, self.hidden_dropout
-            )
-        nvtx_range_pop(suffix="mlp_bda")
+            hidden_states = self.mlp_bda(self.training, self.config.bias_dropout_fusion)(mlp_output_with_bias, residual,
+                                                                                         self.hidden_dropout)
+        nvtx_range_pop(suffix='mlp_bda')
 
-        output = make_viewless_tensor(
-            inp=hidden_states, requires_grad=hidden_states.requires_grad, keep_graph=True
-        )
+        output = make_viewless_tensor(inp=hidden_states, requires_grad=hidden_states.requires_grad, keep_graph=True)
 
         return output
+
 
 class OLMo3Bridge(OLMoEBridge):
 
@@ -301,17 +291,18 @@ class OLMo3Bridge(OLMoEBridge):
 
     def _set_layer_mlp(self, mg_layer, hf_state_dict, layer_idx: int, to_mcore: bool):
         hf_mlp_prefix = 'mlp'
-        hf_mlp = getattr(self.hf_layers[layer_idx], hf_mlp_prefix)
         mg_mlp = None if mg_layer is None else mg_layer.mlp
         hf_state_dict.update(self._set_mlp_state(mg_mlp, hf_state_dict, f'{hf_mlp_prefix}.', layer_idx, to_mcore))
-        self._set_state_dict(mg_layer, 'post_attn_layernorm.weight', hf_state_dict,
-                             'post_attention_layernorm.weight', to_mcore)
-        self._set_state_dict(mg_layer, 'post_mlp_layernorm.weight', hf_state_dict,
-                             'post_feedforward_layernorm.weight', to_mcore)
+        self._set_state_dict(mg_layer, 'post_attn_layernorm.weight', hf_state_dict, 'post_attention_layernorm.weight',
+                             to_mcore)
+        self._set_state_dict(mg_layer, 'post_mlp_layernorm.weight', hf_state_dict, 'post_feedforward_layernorm.weight',
+                             to_mcore)
         return hf_state_dict
+
 
 # rewrite this class to select sliding_rotary_pos_emb or full_rotaty_pos_emb in forward pass
 class Olmo3TransformerBlock(TransformerBlock):
+
     def _checkpointed_forward(
         self,
         hidden_states: Tensor,
@@ -326,10 +317,11 @@ class Olmo3TransformerBlock(TransformerBlock):
     ):
 
         from megatron.core.transformer.transformer_block import te_checkpoint
+
         def custom(start: int, end: int):
-            def custom_forward(
-                hidden_states, attention_mask, context, context_mask, rotary_pos_emb, sliding_rotary_pos_emb
-            ):
+
+            def custom_forward(hidden_states, attention_mask, context, context_mask, rotary_pos_emb,
+                               sliding_rotary_pos_emb):
                 for index in range(start, end):
                     layer = self._get_layer(index)
                     if layer.self_attention.layer_type == 'sliding_attention':
@@ -338,13 +330,9 @@ class Olmo3TransformerBlock(TransformerBlock):
                         layer_rotary_pos_emb = rotary_pos_emb
                     if use_inner_quantization_context:
                         if self.config.fp8:
-                            inner_quantization_context = get_fp8_context(
-                                self.config, layer.layer_number - 1
-                            )
+                            inner_quantization_context = get_fp8_context(self.config, layer.layer_number - 1)
                         elif self.config.fp4:
-                            inner_quantization_context = get_fp4_context(
-                                self.config, layer.layer_number - 1
-                            )
+                            inner_quantization_context = get_fp4_context(self.config, layer.layer_number - 1)
                         else:
                             inner_quantization_context = nullcontext()
                     else:
@@ -367,36 +355,19 @@ class Olmo3TransformerBlock(TransformerBlock):
 
         def checkpoint_handler(forward_func):
             if self.config.fp8 or self.config.fp4:
-                return te_checkpoint(
-                    forward_func,
-                    self.config.distribute_saved_activations,
-                    tensor_parallel.random.get_cuda_rng_tracker,
-                    self.pg_collection.tp,
-                    hidden_states,
-                    attention_mask,
-                    context,
-                    context_mask,
-                    rotary_pos_emb,
-                    sliding_rotary_pos_emb
-                )
+                return te_checkpoint(forward_func, self.config.distribute_saved_activations,
+                                     tensor_parallel.random.get_cuda_rng_tracker, self.pg_collection.tp, hidden_states,
+                                     attention_mask, context, context_mask, rotary_pos_emb, sliding_rotary_pos_emb)
             else:
-                return tensor_parallel.checkpoint(
-                    forward_func,
-                    self.config.distribute_saved_activations,
-                    hidden_states,
-                    attention_mask,
-                    context,
-                    context_mask,
-                    rotary_pos_emb,
-                    sliding_rotary_pos_emb
-                )
+                return tensor_parallel.checkpoint(forward_func, self.config.distribute_saved_activations, hidden_states,
+                                                  attention_mask, context, context_mask, rotary_pos_emb,
+                                                  sliding_rotary_pos_emb)
 
         if self.config.recompute_method == 'uniform':
             layer_idx = 0
             while layer_idx < self.num_layers_per_pipeline_rank:
                 hidden_states, context = checkpoint_handler(
-                    custom(layer_idx, layer_idx + self.config.recompute_num_layers)
-                )
+                    custom(layer_idx, layer_idx + self.config.recompute_num_layers))
 
                 layer_idx += self.config.recompute_num_layers
 
@@ -405,17 +376,15 @@ class Olmo3TransformerBlock(TransformerBlock):
             for layer_idx in range(self.num_layers_per_pipeline_rank):
                 if (self.config.fp8 or self.config.fp4) and not hidden_states.requires_grad:
                     recompute_skip_num_layers += 1
-                if (
-                    layer_idx >= recompute_skip_num_layers
-                    and layer_idx < self.config.recompute_num_layers + recompute_skip_num_layers
-                ):
+                if (layer_idx >= recompute_skip_num_layers
+                        and layer_idx < self.config.recompute_num_layers + recompute_skip_num_layers):
                     hidden_states, context = checkpoint_handler(custom(layer_idx, layer_idx + 1))
                 else:
-                    hidden_states, context = custom(layer_idx, layer_idx + 1)(
-                        hidden_states, attention_mask, context, context_mask, rotary_pos_emb, sliding_rotary_pos_emb
-                    )
+                    hidden_states, context = custom(layer_idx,
+                                                    layer_idx + 1)(hidden_states, attention_mask, context, context_mask,
+                                                                   rotary_pos_emb, sliding_rotary_pos_emb)
         else:
-            raise ValueError("Invalid activation recompute method.")
+            raise ValueError('Invalid activation recompute method.')
 
         return hidden_states
 
@@ -458,8 +427,7 @@ class Olmo3TransformerBlock(TransformerBlock):
             use_outer_quantization_context = self.config.fp8_recipe == Fp8Recipe.delayed
             use_inner_quantization_context = self.config.fp8_recipe != Fp8Recipe.delayed
             outer_quantization_context = (
-                get_fp8_context(self.config) if use_outer_quantization_context else nullcontext()
-            )
+                get_fp8_context(self.config) if use_outer_quantization_context else nullcontext())
         elif self.config.fp4:
             use_outer_quantization_context = False
             use_inner_quantization_context = True
@@ -486,13 +454,9 @@ class Olmo3TransformerBlock(TransformerBlock):
                 for l_no, layer in enumerate(self.layers):
                     if use_inner_quantization_context:
                         if self.config.fp8:
-                            inner_quantization_context = get_fp8_context(
-                                self.config, layer.layer_number - 1
-                            )
+                            inner_quantization_context = get_fp8_context(self.config, layer.layer_number - 1)
                         elif self.config.fp4:
-                            inner_quantization_context = get_fp4_context(
-                                self.config, layer.layer_number - 1
-                            )
+                            inner_quantization_context = get_fp4_context(self.config, layer.layer_number - 1)
                         else:
                             inner_quantization_context = nullcontext()
                     else:
@@ -517,36 +481,30 @@ class Olmo3TransformerBlock(TransformerBlock):
                             sequence_len_offset=sequence_len_offset,
                         )
 
-                    if (
-                        torch.is_grad_enabled()
-                        and self.config.cpu_offloading
-                        and self.group_prefetch_offload_commit_async is not None
-                    ):
+                    if (torch.is_grad_enabled() and self.config.cpu_offloading
+                            and self.group_prefetch_offload_commit_async is not None):
                         hidden_states = self.group_prefetch_offload_commit_async(hidden_states)
 
         # Final layer norm.
         if self.final_layernorm is not None:
             hidden_states = self.final_layernorm(hidden_states)
-            hidden_states = make_viewless_tensor(
-                inp=hidden_states, requires_grad=True, keep_graph=True
-            )
+            hidden_states = make_viewless_tensor(inp=hidden_states, requires_grad=True, keep_graph=True)
 
         if not self.pre_process and len(self.layers) == 0 and not self.final_layernorm:
             hidden_states = hidden_states.clone()
 
         return hidden_states
 
+
 class Olmo3GPTModel(GPTModel):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.rotary_pos_emb_sliding = RotaryEmbedding(
             kv_channels=self.config.kv_channels,
             rotary_percent=self.config.rotary_percent,
             rotary_interleaved=self.config.rotary_interleaved,
-            # seq_len_interpolation_factor=kwargs['seq_len_interpolation_factor'],
             rotary_base=self.config.rotary_base,
-            rope_scaling=self.config.rope_scaling,
-            #rope_scaling_factor=self.config.rope_scaling_factor,
             use_cpu_initialization=self.config.use_cpu_initialization,
             cp_group=self.pg_collection.cp,
         )
@@ -558,6 +516,7 @@ class Olmo3GPTModel(GPTModel):
             pg_collection=self.pg_collection,
             vp_stage=self.vp_stage,
         )
+        rope_utils._apply_rotary_pos_emb_bshd = rope_utils._origin_apply_rotary_pos_emb_bshd
 
     def _preprocess(
         self,
@@ -569,8 +528,8 @@ class Olmo3GPTModel(GPTModel):
     ):
         decoder_input, rotary_pos_emb, rotary_pos_cos, rotary_pos_sin, sequence_len_offset = \
             super()._preprocess(input_ids, position_ids, decoder_input, inference_context, packed_seq_params)
-        rotary_seq_len = RotaryEmbedding.get_rotary_seq_len(self, inference_context, self.decoder,
-                                                    decoder_input, self.config, packed_seq_params)
+        rotary_seq_len = RotaryEmbedding.get_rotary_seq_len(self, inference_context, self.decoder, decoder_input,
+                                                            self.config, packed_seq_params)
         packed_seq = packed_seq_params is not None and packed_seq_params.qkv_format == 'thd'
         sliding_rotary_pos_emb = self.rotary_pos_emb_sliding(
             rotary_seq_len,
@@ -579,7 +538,8 @@ class Olmo3GPTModel(GPTModel):
         if packed_seq and not self.config.apply_rope_fusion:
             assert position_ids.shape[0] == 1, f'position_ids.shape: {position_ids.shape}'
             rotary_pos_emb = rotary_pos_emb[position_ids[0]]
-        return decoder_input, rotary_pos_emb, sliding_rotary_pos_emb, rotary_pos_cos, rotary_pos_sin, sequence_len_offset
+        return decoder_input, rotary_pos_emb, sliding_rotary_pos_emb, \
+            rotary_pos_cos, rotary_pos_sin, sequence_len_offset
 
     def forward(
         self,
@@ -641,6 +601,7 @@ class Olmo3GPTModel(GPTModel):
             inference_context=inference_context,
         )
 
+
 def get_olmo3_decoder_block_spec(
     config: TransformerConfig,
     vp_stage: Optional[int] = None,
@@ -690,17 +651,13 @@ def get_olmo3_decoder_block_spec(
 
     return block_spec
 
+
 class OlMo3Loader(MegatronModelLoader):
-    model_cls=Olmo3GPTModel
+    model_cls = Olmo3GPTModel
 
     def get_transformer_layer_spec(self, vp_stage: Optional[int] = None):
         return get_olmo3_decoder_block_spec(self.config, vp_stage)
 
 
 register_megatron_model(
-    MegatronModelMeta(
-        MegatronModelType.olmo3,
-        [ModelType.olmo3],
-        bridge_cls=OLMo3Bridge,
-        loader=OlMo3Loader
-    ))
+    MegatronModelMeta(MegatronModelType.olmo3, [ModelType.olmo3], bridge_cls=OLMo3Bridge, loader=OlMo3Loader))
